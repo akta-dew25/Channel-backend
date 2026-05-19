@@ -1,0 +1,732 @@
+import mongoose from "mongoose";
+
+import ChatGroup from "../../models/chat-grp.model.js";
+
+import ChatGroupMember from "../../models/chat-grp-member.model.js";
+import axios from "axios";
+
+//  get users by ids
+
+const getUsersData = async (userIds = [], accessToken = null) => {
+  try {
+    const headers = {};
+    if (accessToken) {
+      headers.Authorization = accessToken; // Bearer <token>
+    }
+    const response = await axios.post(
+      `http://localhost:3000/api/v1/user/by-ids`,
+      {
+        userIds: userIds,
+      },
+      { headers },
+    );
+    const users = response.data.users.map((user) => ({
+      userId: user.userId,
+      userName: user.name,
+    }));
+    return users || [];
+  } catch (error) {
+    // console.log(error);
+    throw new Error("Failed to fetch user details");
+  }
+};
+/**
+ * GENERATE GROUP NAME
+ */
+
+const generateGroupName = (members = []) => {
+  const combinedName = members
+    .map((member) => member.userName.replace(/\s+/g, ""))
+    .join("");
+
+  return combinedName.length > 25
+    ? combinedName.slice(0, 25) + "..."
+    : combinedName;
+};
+
+/**
+ * CHECK EXISTING GROUP
+ */
+
+const checkExistingGroup = async ({ orgId, memberIds }) => {
+  const groups = await ChatGroup.aggregate([
+    {
+      $match: {
+        orgId: new mongoose.Types.ObjectId(orgId),
+
+        groupType: "group",
+
+        deletedAt: null,
+
+        memberCount: memberIds.length,
+      },
+    },
+    {
+      $lookup: {
+        from: "chatgroupmembers",
+
+        localField: "_id",
+
+        foreignField: "groupId",
+
+        as: "members",
+      },
+    },
+    {
+      $match: {
+        "members.userId": {
+          $all: memberIds.map((id) => new mongoose.Types.ObjectId(id)),
+        },
+      },
+    },
+  ]);
+
+  return groups.length > 0;
+};
+
+/**
+ * CREATE CHAT GROUP UTILS
+ */
+
+export const createChatGroupUtils = async ({
+  orgId,
+  userId,
+  authUserName,
+  accessToken,
+  name,
+  description,
+  avatar,
+
+  groupType,
+  privacyType = "private",
+
+  membersIds = [],
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+    //  fetch users
+
+    const users = await getUsersData(membersIds, accessToken);
+
+    /**
+     * REMOVE DUPLICATE MEMBERS
+     */
+
+    let uniqueMembers = [];
+
+    users.forEach((member) => {
+      const exists = uniqueMembers.find(
+        (item) => String(item.userId) === String(member.userId),
+      );
+
+      if (!exists) {
+        uniqueMembers.push(member);
+      }
+    });
+
+    /**
+     * ADD CREATOR
+     */
+
+    const creatorExists = uniqueMembers.find(
+      (member) => String(member.userId) === String(userId),
+    );
+
+    if (!creatorExists) {
+      uniqueMembers.push({
+        userId: userId,
+        userName: authUserName,
+      });
+    }
+
+    /**
+     * PERSONAL CHAT
+     */
+
+    if (groupType === "personal") {
+      if (uniqueMembers.length !== 2) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Personal chat only supports 2 users",
+        };
+      }
+
+      const existingPersonalChat = await ChatGroup.aggregate([
+        {
+          $match: {
+            orgId: new mongoose.Types.ObjectId(orgId),
+
+            groupType: "personal",
+
+            memberCount: 2,
+
+            deletedAt: null,
+          },
+        },
+        {
+          $lookup: {
+            from: "chatgroupmembers",
+
+            localField: "_id",
+
+            foreignField: "groupId",
+
+            as: "members",
+          },
+        },
+        {
+          $match: {
+            "members.userId": {
+              $all: uniqueMembers.map(
+                (member) => new mongoose.Types.ObjectId(member.userId),
+              ),
+            },
+          },
+        },
+      ]);
+
+      if (existingPersonalChat.length) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Personal chat already exists",
+        };
+      }
+
+      name = uniqueMembers[0].userName || null;
+    }
+
+    /**
+     * GROUP
+     */
+
+    if (groupType === "group") {
+      if (uniqueMembers.length < 3) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Group should contain more than 2 members",
+        };
+      }
+
+      const existingGroup = await checkExistingGroup({
+        orgId,
+
+        memberIds: uniqueMembers.map((member) => member.userId),
+      });
+
+      if (existingGroup) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Group already exists with same members",
+        };
+      }
+
+      /**
+       * AUTO NAME
+       */
+
+      if (!name) {
+        name = generateGroupName(uniqueMembers);
+      }
+    }
+
+    /**
+     * CHANNEL
+     */
+
+    if (groupType === "channel") {
+      if (!name) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Channel name is required",
+        };
+      }
+
+      const existingChannel = await ChatGroup.findOne({
+        orgId,
+
+        groupType: "channel",
+
+        name,
+
+        deletedAt: null,
+      });
+
+      if (existingChannel) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Channel already exists",
+        };
+      }
+    }
+
+    /**
+     * CREATE GROUP
+     */
+
+    const [chatGroup] = await ChatGroup.create(
+      [
+        {
+          orgId,
+
+          name,
+
+          description,
+
+          avatar,
+
+          groupType,
+
+          privacyType,
+
+          userId,
+
+          memberCount: uniqueMembers.length,
+        },
+      ],
+      { session },
+    );
+
+    /**
+     * CREATE MEMBERS
+     */
+
+    const memberPayload = uniqueMembers.map((member) => ({
+      orgId,
+
+      groupId: chatGroup._id,
+
+      userId: member.userId,
+
+      role: String(member.userId) === String(userId) ? "admin" : "member",
+
+      status: "active",
+
+      unreadCount: 0,
+
+      notificationPreference: "all",
+    }));
+
+    await ChatGroupMember.insertMany(memberPayload, { session });
+
+    await session.commitTransaction();
+
+    return {
+      statusCode: 201,
+
+      success: true,
+
+      message: "Chat group created successfully",
+
+      data: {
+        orgId: chatGroup.orgId,
+        name: chatGroup.name,
+        description: chatGroup.description,
+        picture: chatGroup.avatar,
+        type: chatGroup.groupType,
+      },
+    };
+  } catch (error) {
+    await session.abortTransaction();
+
+    return {
+      statusCode: 500,
+
+      success: false,
+
+      message: error.message,
+    };
+  } finally {
+    session.endSession();
+  }
+};
+
+/**
+ * ADD MEMBERS IN GROUP
+ */
+
+export const addMembersInGroupUtils = async ({
+  orgId,
+  groupId,
+  members = [],
+}) => {
+  try {
+    const group = await ChatGroup.findOne({
+      _id: groupId,
+
+      orgId,
+
+      deletedAt: null,
+    });
+
+    if (!group) {
+      return {
+        statusCode: 404,
+
+        success: false,
+
+        message: "Group not found",
+      };
+    }
+
+    if (group.groupType === "personal") {
+      return {
+        statusCode: 400,
+
+        success: false,
+
+        message: "Cannot add members in personal chat",
+      };
+    }
+
+    const existingMembers = await ChatGroupMember.find({
+      groupId,
+
+      status: "active",
+    });
+
+    const existingMemberIds = existingMembers.map((member) =>
+      String(member.userId),
+    );
+
+    const newMembers = members.filter(
+      (member) => !existingMemberIds.includes(String(member.userId)),
+    );
+
+    if (!newMembers.length) {
+      return {
+        statusCode: 400,
+
+        success: false,
+
+        message: "All users already exist in group",
+      };
+    }
+
+    const payload = newMembers.map((member) => ({
+      orgId,
+
+      groupId,
+
+      userId: member.userId,
+
+      role: "member",
+
+      status: "active",
+
+      unreadCount: 0,
+
+      notificationPreference: "all",
+    }));
+
+    await ChatGroupMember.insertMany(payload);
+
+    await ChatGroup.findByIdAndUpdate(groupId, {
+      $inc: {
+        memberCount: newMembers.length,
+      },
+    });
+
+    return {
+      statusCode: 200,
+
+      success: true,
+
+      message: "Members added successfully",
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+
+      success: false,
+
+      message: error.message,
+    };
+  }
+};
+
+export const updateChatGroupUtils = async ({
+  orgId,
+  groupId,
+
+  name,
+  description,
+  avatar,
+  topic,
+  privacyType,
+}) => {
+  try {
+    const group = await ChatGroup.findOne({
+      _id: groupId,
+      orgId,
+      deletedAt: null,
+    });
+
+    if (!group) {
+      return {
+        statusCode: 404,
+        success: false,
+        message: "Group not found",
+      };
+    }
+
+    /**
+     * PERSONAL CHAT RESTRICTED
+     */
+
+    if (group.groupType === "personal") {
+      return {
+        statusCode: 400,
+        success: false,
+        message: "Cannot update personal chat",
+      };
+    }
+
+    /**
+     * CHANNEL NAME CHECK
+     */
+
+    if (group.groupType === "channel" && name) {
+      const existingChannel = await ChatGroup.findOne({
+        orgId,
+        groupType: "channel",
+        name,
+        _id: { $ne: groupId },
+        deletedAt: null,
+      });
+
+      if (existingChannel) {
+        return {
+          statusCode: 400,
+          success: false,
+          message: "Channel name already exists",
+        };
+      }
+    }
+
+    /**
+     * UPDATE
+     */
+
+    const updatedGroup = await ChatGroup.findByIdAndUpdate(
+      groupId,
+      {
+        $set: {
+          ...(name && { name }),
+
+          ...(description && {
+            description,
+          }),
+
+          ...(avatar && { avatar }),
+
+          ...(topic && { topic }),
+
+          ...(privacyType && {
+            privacyType,
+          }),
+        },
+      },
+      {
+        new: true,
+      },
+    );
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: "Group updated successfully",
+      data: {
+        orgId: updatedGroup.orgId,
+        name: updatedGroup.name,
+        description: updatedGroup.description,
+        picture: updatedGroup.avatar,
+        type: updatedGroup.groupType,
+      },
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      success: false,
+      message: error.message,
+    };
+  }
+};
+
+export const removeMembersFromGroupUtils = async ({
+  orgId,
+  groupId,
+  memberIds = [],
+}) => {
+  try {
+    const group = await ChatGroup.findOne({
+      _id: groupId,
+      orgId,
+      deletedAt: null,
+    });
+
+    if (!group) {
+      return {
+        statusCode: 404,
+        success: false,
+        message: "Group not found",
+      };
+    }
+
+    /**
+     * PERSONAL CHAT RESTRICTED
+     */
+
+    if (group.groupType === "personal") {
+      return {
+        statusCode: 400,
+        success: false,
+        message: "Cannot remove members from personal chat",
+      };
+    }
+
+    /**
+     * REMOVE MEMBERS
+     */
+
+    await ChatGroupMember.updateMany(
+      {
+        groupId,
+        userId: { $in: memberIds },
+      },
+      {
+        $set: {
+          status: "removed",
+          leftAt: new Date(),
+        },
+      },
+    );
+
+    /**
+     * UPDATE MEMBER COUNT
+     */
+
+    const activeMembers = await ChatGroupMember.countDocuments({
+      groupId,
+      status: "active",
+    });
+
+    await ChatGroup.findByIdAndUpdate(groupId, {
+      memberCount: activeMembers,
+    });
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: "Members removed successfully",
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      success: false,
+      message: error.message,
+    };
+  }
+};
+
+export const getChatGroupsUtils = async ({ orgId, userId, groupType }) => {
+  try {
+    /**
+     * GET USER GROUP IDS
+     */
+
+    const memberGroups = await ChatGroupMember.find({
+      orgId,
+      userId,
+      status: "active",
+    }).select("groupId");
+
+    const groupIds = memberGroups.map((item) => item.groupId);
+
+    /**
+     * FILTER
+     */
+
+    let filter = {
+      _id: { $in: groupIds },
+
+      orgId,
+
+      deletedAt: null,
+    };
+
+    /**
+     * FILTER BY TYPE
+     */
+
+    if (groupType) {
+      filter.groupType = groupType;
+    }
+
+    /**
+     * GET GROUPS
+     */
+
+    const groups = await ChatGroup.find(filter)
+      .sort({
+        lastMessageAt: -1,
+        updatedAt: -1,
+      })
+      .lean();
+
+    /**
+     * ATTACH MEMBERS
+     */
+
+    const finalGroups = await Promise.all(
+      groups.map(async (group) => {
+        const members = await ChatGroupMember.find({
+          groupId: group._id,
+
+          status: "active",
+        }).select("userId role unreadCount isPinned");
+
+        return {
+          ...group,
+
+          members,
+        };
+      }),
+    );
+    const finalGroupsMap = finalGroups.map((group) => ({
+      name: group.name,
+      groupId: group._id,
+      orgId: group.orgId,
+      description: group.description,
+      groupType: group.groupType,
+      privacyType: group.privacyType,
+      memberCount: group.memberCount,
+      members: group.members,
+    }));
+
+    return {
+      statusCode: 200,
+
+      success: true,
+
+      message: "Chat groups fetched successfully",
+
+      data: finalGroupsMap,
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+
+      success: false,
+
+      message: error.message,
+    };
+  }
+};
