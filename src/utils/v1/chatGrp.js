@@ -334,6 +334,7 @@ export const createChatGroupUtils = async ({
       },
     };
   } catch (error) {
+    console.log(error);
     await session.abortTransaction();
 
     return {
@@ -442,6 +443,7 @@ export const addMembersInGroupUtils = async ({
       message: "Members added successfully",
     };
   } catch (error) {
+    console.log(error);
     return {
       statusCode: 500,
 
@@ -552,6 +554,7 @@ export const updateChatGroupUtils = async ({
       },
     };
   } catch (error) {
+    console.log(error);
     return {
       statusCode: 500,
       success: false,
@@ -628,6 +631,7 @@ export const removeMembersFromGroupUtils = async ({
       message: "Members removed successfully",
     };
   } catch (error) {
+    console.log(error);
     return {
       statusCode: 500,
       success: false,
@@ -700,16 +704,36 @@ export const getChatGroupsUtils = async ({ orgId, userId, groupType }) => {
         };
       }),
     );
-    const finalGroupsMap = finalGroups.map((group) => ({
-      name: group.name,
-      groupId: group._id,
-      orgId: group.orgId,
-      description: group.description,
-      groupType: group.groupType,
-      privacyType: group.privacyType,
-      memberCount: group.memberCount,
-      members: group.members,
-    }));
+    const finalGroupsMap = finalGroups
+      .map((group) => ({
+        name: group.name,
+        groupId: group._id,
+        orgId: group.orgId,
+        description: group.description,
+        groupType: group.groupType,
+        privacyType: group.privacyType,
+        memberCount: group.memberCount,
+        members: group.members,
+        createdAt: group.createdAt,
+        lastMessageAt: group.lastMessageAt,
+      }))
+      .sort((a, b) => {
+        if (a.groupType === "channel" && b.groupType !== "channel") {
+          return -1;
+        }
+
+        if (a.groupType !== "channel" && b.groupType === "channel") {
+          return 1;
+        }
+
+        /**
+         * LATEST CREATED FIRST
+         */
+
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      });
 
     return {
       statusCode: 200,
@@ -721,6 +745,7 @@ export const getChatGroupsUtils = async ({ orgId, userId, groupType }) => {
       data: finalGroupsMap,
     };
   } catch (error) {
+    console.log(error);
     return {
       statusCode: 500,
 
