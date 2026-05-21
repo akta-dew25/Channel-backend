@@ -64,22 +64,22 @@ const chatGroupSchema = new mongoose.Schema(
       default: null,
     },
 
-    lastMessageText: {
-      type: String,
-      trim: true,
-      default: null,
-    },
+    // lastMessageText: {
+    //   type: String,
+    //   trim: true,
+    //   default: null,
+    // },
 
-    lastMessageSenderId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
+    // lastMessageSenderId: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   ref: "User",
+    //   default: null,
+    // },
 
-    lastMessageAt: {
-      type: Date,
-      default: null,
-    },
+    // lastMessageAt: {
+    //   type: Date,
+    //   default: null,
+    // },
 
     memberCount: {
       type: Number,

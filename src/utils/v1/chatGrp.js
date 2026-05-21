@@ -697,10 +697,15 @@ export const getChatGroupsUtils = async ({ orgId, userId, groupType }) => {
           status: "active",
         }).select("userId role unreadCount isPinned");
 
+        const latestMessage = group.lastMessageId
+          ? await Message.findById(group.lastMessageId).lean()
+          : null;
+
         return {
           ...group,
 
           members,
+          latestMessage,
         };
       }),
     );
@@ -715,7 +720,8 @@ export const getChatGroupsUtils = async ({ orgId, userId, groupType }) => {
         memberCount: group.memberCount,
         members: group.members,
         createdAt: group.createdAt,
-        lastMessageAt: group.lastMessageAt,
+        // lastMessageAt: group.lastMessageAt,
+        latestMessage: group.latestMessage,
       }))
       .sort((a, b) => {
         if (a.groupType === "channel" && b.groupType !== "channel") {
