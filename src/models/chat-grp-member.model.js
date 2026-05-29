@@ -26,8 +26,8 @@ const chatGroupMemberSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["admin", "member"],
-      default: "member",
+      enum: ["admin", "user"],
+      default: null,
     },
 
     // member state

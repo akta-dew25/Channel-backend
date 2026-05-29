@@ -4,6 +4,7 @@ import {
   updateChatGroupUtils,
   removeMembersFromGroupUtils,
   getChatGroupsUtils,
+  getChatGroupByIdUtils,
 } from "../../utils/v1/chatGrp.js";
 
 /**
@@ -43,6 +44,7 @@ export const addMembersInGroup = async (req, res) => {
       groupId: req.params.groupId,
 
       orgId: req.user.orgId,
+      accessToken: req.headers.authorization,
     });
 
     res.status(statusCode).json(response);
@@ -97,12 +99,15 @@ export const removeMembersFromGroup = async (req, res) => {
 
 export const getChatGroups = async (req, res) => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 5;
+
     const { statusCode, ...response } = await getChatGroupsUtils({
       orgId: req.user.orgId,
-
       userId: req.user.userId,
-
       groupType: req.query.groupType,
+      page,
+      limit,
     });
 
     res.status(statusCode).json(response);
@@ -111,7 +116,32 @@ export const getChatGroups = async (req, res) => {
 
     res.status(500).json({
       message: "Internal Server Error",
+      error: [error.message],
+    });
+  }
+};
 
+export const getChatGroupByIdController = async (req, res) => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const { statusCode, ...response } = await getChatGroupByIdUtils({
+      orgId: req.user.orgId,
+      userId: req.user.userId,
+      groupId: req.params.groupId,
+      accessToken: req.headers.authorization,
+
+      page,
+      limit,
+    });
+
+    res.status(statusCode).json(response);
+  } catch (error) {
+    console.log({ error });
+
+    res.status(500).json({
+      message: "Internal Server Error",
       error: [error.message],
     });
   }

@@ -6,6 +6,7 @@ import {
   removeMembersFromGroup,
   updateChatGroup,
   getChatGroups,
+  getChatGroupByIdController,
 } from "../../controller/v1/chatGrp.js";
 import { validatePayload } from "../../middleware/validator.js";
 import { chatGroupPayloadValidator } from "../../utils/v1/chatGrpValidator.json.js";
@@ -26,6 +27,8 @@ chatGrpRouter.get(
   // authMiddleware,
   getChatGroups,
 );
+
+chatGrpRouter.get("/:groupId", getChatGroupByIdController);
 
 chatGrpRouter.patch(
   "/:groupId/add-members",
