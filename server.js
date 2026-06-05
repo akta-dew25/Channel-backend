@@ -1,7 +1,8 @@
 import app from "./src/app.js";
 import connectDb from "./src/config/db.js";
-import { Server } from "socket.io";
 import http from "http";
+import { Server } from "socket.io";
+import { initializeSocket } from "./src/socket/socket.js";
 
 connectDb();
 
@@ -10,9 +11,11 @@ const server = http.createServer(app);
 export const io = new Server(server, {
   cors: {
     origin: "http://localhost:5173",
-    methods: ["GET", "POST"],
+    credentials: true,
   },
 });
+
+initializeSocket(io);
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

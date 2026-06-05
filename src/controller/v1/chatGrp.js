@@ -108,6 +108,7 @@ export const getChatGroups = async (req, res) => {
       groupType: req.query.groupType,
       page,
       limit,
+      accessToken: req.headers.authorization,
     });
 
     res.status(statusCode).json(response);

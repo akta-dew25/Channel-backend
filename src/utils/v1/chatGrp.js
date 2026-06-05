@@ -5,6 +5,8 @@ import ChatGroup from "../../models/chat-grp.model.js";
 import ChatGroupMember from "../../models/chat-grp-member.model.js";
 import axios from "axios";
 import Message from "../../models/messages.model.js";
+import { getCache, setCache, deleteCache } from "./cache.js";
+import { redisKeys } from "./cache.js";
 
 //  get users by ids
 
@@ -12,7 +14,9 @@ const getUsersData = async (userIds = [], accessToken = null) => {
   try {
     const headers = {};
     if (accessToken) {
+      // set both header casings to be robust depending on downstream server
       headers.Authorization = accessToken; // Bearer <token>
+      headers.authorization = accessToken;
     }
     const response = await axios.post(
       `http://localhost:3000/api/v1/users/userdetails`,
@@ -21,15 +25,34 @@ const getUsersData = async (userIds = [], accessToken = null) => {
       },
       { headers },
     );
-    const users = response.data.users.map((user) => ({
-      userId: user.userId,
-      userName: user.name,
+    // debug log the raw response to help diagnose shape/auth issues
+    console.log("getUsersData response:", response?.status, response?.data);
+
+    // support multiple response shapes
+    const rawUsers = response?.data?.users || response?.data?.data?.users || [];
+    const users = rawUsers.map((user) => ({
+      userId: user.userId || user.id || user._id,
+      userName: user.name || user.userName || user.fullName,
       email: user.email,
     }));
     return users || [];
   } catch (error) {
-    console.log(error);
-    throw new Error("Failed to fetch user details");
+    console.log(
+      "getUsersData error:",
+      error?.response?.status,
+      error?.response?.data || error?.message || error,
+    );
+    // If user service is down or returns unexpected shape, return placeholders
+    // so group creation / message flow can continue.
+    try {
+      return (userIds || []).map((id) => ({
+        userId: id,
+        userName: null,
+        email: null,
+      }));
+    } catch (e) {
+      return [];
+    }
   }
 };
 /**
@@ -176,7 +199,7 @@ export const createChatGroupUtils = async ({
 
             foreignField: "groupId",
 
-            as: "user",
+            as: "members",
           },
         },
         {
@@ -198,7 +221,9 @@ export const createChatGroupUtils = async ({
         };
       }
 
-      name = uniqueMembers[0].userName || null;
+      name =
+        uniqueMembers.find((member) => String(member.userId) !== String(userId))
+          ?.userName || authUserName;
     }
 
     /**
@@ -290,6 +315,8 @@ export const createChatGroupUtils = async ({
 
           userId,
 
+          createdBy: userId,
+
           memberCount: uniqueMembers.length,
         },
       ],
@@ -334,6 +361,18 @@ export const createChatGroupUtils = async ({
     }
 
     await session.commitTransaction();
+    // invalidate chat list cache for all members so everyone sees the new group immediately
+    await Promise.all(
+      memberPayload.map(async (m) => {
+        try {
+          await deleteCache(redisKeys.chatGroups(orgId, m.userId, "all"));
+          await deleteCache(redisKeys.chatGroups(orgId, m.userId, groupType));
+        } catch (err) {
+          // continue on cache errors
+          console.log("cache delete error", err?.message || err);
+        }
+      }),
+    );
 
     return {
       statusCode: 201,
@@ -453,6 +492,17 @@ export const addMembersInGroupUtils = async ({
     }));
 
     await ChatGroupMember.insertMany(payload);
+
+    await deleteCache(redisKeys.chatGroupById(groupId));
+    for (const member of newMembers) {
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "all"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "group"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "channel"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "personal"));
+    }
     const userIds = newMembers.map((member) => member.userId);
 
     const users = await getUsersData(userIds, accessToken);
@@ -582,6 +632,22 @@ export const updateChatGroupUtils = async ({
         new: true,
       },
     );
+    await deleteCache(redisKeys.chatGroupById(groupId));
+
+    const members = await ChatGroupMember.find({
+      groupId,
+      status: "active",
+    }).select("userId");
+
+    for (const member of members) {
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "all"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "group"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "channel"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, member.userId, "personal"));
+    }
 
     return {
       statusCode: 200,
@@ -666,6 +732,17 @@ export const removeMembersFromGroupUtils = async ({
     await ChatGroup.findByIdAndUpdate(groupId, {
       memberCount: activeMembers,
     });
+    await deleteCache(redisKeys.chatGroupById(groupId));
+
+    for (const memberId of memberIds) {
+      await deleteCache(redisKeys.chatGroups(orgId, memberId, "all"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, memberId, "group"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, memberId, "channel"));
+
+      await deleteCache(redisKeys.chatGroups(orgId, memberId, "personal"));
+    }
 
     return {
       statusCode: 200,
@@ -688,11 +765,22 @@ export const getChatGroupsUtils = async ({
   groupType,
   page = 1,
   limit = 5,
+  accessToken,
 }) => {
   try {
     /**
      * GET USER GROUP IDS
      */
+
+    const cacheKey = redisKeys.chatGroups(orgId, userId, groupType || "all");
+    console.log({ cacheKey });
+
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      console.log({ cachedData });
+      return cachedData;
+    }
 
     const memberGroups = await ChatGroupMember.find({
       orgId,
@@ -744,8 +832,26 @@ export const getChatGroupsUtils = async ({
           ? await Message.findById(group.lastMessageId).lean()
           : null;
 
+        let nameOverride = group.name;
+        if (group.groupType === "personal") {
+          const otherMember = members.find(
+            (member) => String(member.userId) !== String(userId),
+          );
+
+          if (otherMember) {
+            const [otherUser] = await getUsersData(
+              [otherMember.userId],
+              accessToken,
+            );
+            if (otherUser?.userName) {
+              nameOverride = otherUser.userName;
+            }
+          }
+        }
+
         return {
           ...group,
+          name: nameOverride,
           members: members,
           latestMessage,
         };
@@ -791,7 +897,7 @@ export const getChatGroupsUtils = async ({
       safePage * safeLimit,
     );
 
-    return {
+    const response = {
       statusCode: 200,
       success: true,
       message: "Chat groups fetched successfully",
@@ -804,6 +910,10 @@ export const getChatGroupsUtils = async ({
         hasMore: safePage < totalPages,
       },
     };
+
+    await setCache(cacheKey, response, 300);
+
+    return response;
   } catch (error) {
     console.log(error);
     return {
@@ -826,6 +936,14 @@ export const getChatGroupByIdUtils = async ({
     /**
      * CHECK USER IS MEMBER OF GROUP
      */
+
+    const cacheKey = redisKeys.chatGroupById(groupId, userId);
+
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return cachedData;
+    }
     const member = await ChatGroupMember.findOne({
       groupId,
       orgId,
@@ -916,7 +1034,7 @@ export const getChatGroupByIdUtils = async ({
     /**
      * FINAL RESPONSE
      */
-    return {
+    const response = {
       statusCode: 200,
       success: true,
       message: "Chat group fetched successfully",
@@ -942,6 +1060,10 @@ export const getChatGroupByIdUtils = async ({
         hasMore: safePage * safeLimit < totalMessages,
       },
     };
+
+    await setCache(cacheKey, response, 300);
+
+    return response;
   } catch (error) {
     console.log(error);
 

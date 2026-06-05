@@ -9,6 +9,7 @@ export const createMessageController = async (req, res) => {
       ...req.body,
       orgId: req.user.orgId,
       senderId: req.user.userId,
+      accessToken: req.headers.authorization,
     });
 
     res.status(statusCode).json(response);
@@ -25,7 +26,7 @@ export const createMessageController = async (req, res) => {
 export const getMessagesController = async (req, res) => {
   try {
     const { statusCode, ...response } = await getMessagesUtils({
-      ...req.body,
+      ...req.query,
       orgId: req.user.orgId,
       groupId: req.params.groupId,
     });
