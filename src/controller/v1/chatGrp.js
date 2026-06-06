@@ -18,6 +18,7 @@ export const createChatGroup = async (req, res) => {
       orgId: req.user.orgId,
       userId: req.user.userId,
       authUserName: req.user.userName,
+      role: req.user.role,
       accessToken: req.headers.authorization,
     });
 
@@ -42,7 +43,7 @@ export const addMembersInGroup = async (req, res) => {
       ...req.body,
 
       groupId: req.params.groupId,
-
+      role: req.user.role,
       orgId: req.user.orgId,
       accessToken: req.headers.authorization,
     });
@@ -62,7 +63,7 @@ export const updateChatGroup = async (req, res) => {
   try {
     const { statusCode, ...response } = await updateChatGroupUtils({
       ...req.body,
-
+      role: req.user.role,
       groupId: req.params.groupId,
 
       orgId: req.user.orgId,

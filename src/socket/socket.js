@@ -1,4 +1,5 @@
-const onlineUsers = new Map();
+export const onlineUsers = new Map();
+import ChatGroupMember from "../models/chat-grp-member.model.js";
 
 export const initializeSocket = (io) => {
   io.on("connection", (socket) => {
@@ -32,19 +33,17 @@ export const initializeSocket = (io) => {
     /**
      * SEND MESSAGE
      */
-    socket.on("send-message", (data) => {
-      console.log({ data });
-
-      if (!data || !data.groupId) return;
-      io.to(data.groupId.toString()).emit("receive-message", data);
-    });
+    // socket.on("send-message", (data) => {
+    //   if (!data || !data.groupId) return;
+    //   io.to(data.groupId.toString()).emit("receive-message", data);
+    // });
 
     /**
      * TYPING
      */
     socket.on("typing", ({ groupId, userName }) => {
-      if (!groupId) return;
       socket.to(groupId.toString()).emit("user-typing", {
+        groupId,
         userName,
       });
     });
@@ -53,8 +52,45 @@ export const initializeSocket = (io) => {
      * STOP TYPING
      */
     socket.on("stop-typing", ({ groupId }) => {
-      if (!groupId) return;
-      socket.to(groupId.toString()).emit("user-stop-typing");
+      socket.to(groupId.toString()).emit("user-stop-typing", {
+        groupId,
+      });
+    });
+
+    /**
+     * MARK MESSAGE AS READ
+     */
+    socket.on("mark-message-read", async ({ groupId, userId, messageId }) => {
+      if (!groupId || !userId || !messageId) return;
+      try {
+        // update lastReadMessageId and clear unreadCount
+        await ChatGroupMember.findOneAndUpdate(
+          { groupId, userId },
+          {
+            $set: {
+              lastReadMessageId: messageId,
+              lastReadAt: new Date(),
+              unreadCount: 0,
+            },
+          },
+          { new: true },
+        );
+
+        // notify group: message was read by user
+        io.to(groupId.toString()).emit("message-read", {
+          messageId,
+          userId,
+          readAt: new Date(),
+        });
+
+        // emit user's new unread count to themselves
+        socket.emit("unread-count-updated", {
+          groupId,
+          unreadCount: 0,
+        });
+      } catch (err) {
+        console.log("mark-message-read error:", err?.message || err);
+      }
     });
 
     /**

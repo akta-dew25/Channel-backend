@@ -26,7 +26,6 @@ const getUsersData = async (userIds = [], accessToken = null) => {
       { headers },
     );
     // debug log the raw response to help diagnose shape/auth issues
-    console.log("getUsersData response:", response?.status, response?.data);
 
     // support multiple response shapes
     const rawUsers = response?.data?.users || response?.data?.data?.users || [];
@@ -121,7 +120,7 @@ export const createChatGroupUtils = async ({
   name,
   description,
   avatar,
-
+  role,
   groupType,
   privacyType = "private",
 
@@ -131,6 +130,17 @@ export const createChatGroupUtils = async ({
 
   try {
     session.startTransaction();
+
+    const isAdmin = role?.name === "Admin";
+    if (groupType === "channel") {
+      if (!isAdmin) {
+        return {
+          statusCode: 403,
+          success: false,
+          message: "Only admin can create channel",
+        };
+      }
+    }
     //  fetch users
 
     const users = await getUsersData(membersIds, accessToken);
@@ -421,6 +431,7 @@ export const addMembersInGroupUtils = async ({
   groupId,
   members = [],
   accessToken,
+  role,
 }) => {
   try {
     const group = await ChatGroup.findOne({
@@ -431,6 +442,8 @@ export const addMembersInGroupUtils = async ({
       deletedAt: null,
     });
 
+    const isAdmin = role.name === "Admin";
+
     if (!group) {
       return {
         statusCode: 404,
@@ -438,6 +451,14 @@ export const addMembersInGroupUtils = async ({
         success: false,
 
         message: "Group not found",
+      };
+    }
+
+    if (group.groupType === "channel" && !isAdmin) {
+      return {
+        statusCode: 403,
+        success: false,
+        message: "Only admin can add members in channel",
       };
     }
 
@@ -549,7 +570,7 @@ export const addMembersInGroupUtils = async ({
 export const updateChatGroupUtils = async ({
   orgId,
   groupId,
-
+  role,
   name,
   description,
   avatar,
@@ -563,11 +584,21 @@ export const updateChatGroupUtils = async ({
       deletedAt: null,
     });
 
+    const isAdmin = role.name === "Admin";
+
     if (!group) {
       return {
         statusCode: 404,
         success: false,
         message: "Group not found",
+      };
+    }
+
+    if (group.groupType === "channel" && !isAdmin) {
+      return {
+        statusCode: 403,
+        success: false,
+        message: "Only admin can update the channel",
       };
     }
 
