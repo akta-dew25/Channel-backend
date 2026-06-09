@@ -17,7 +17,7 @@ export const createMessagesUtils = async ({
 
   messageType = "text",
 
-  attachments = [],
+  attachments,
 
   replyMessageId = null,
   accessToken = null,
@@ -129,9 +129,7 @@ export const getMessagesUtils = async ({
      * CHECK CACHE
      */
     const cachedMessages = await getCache(cacheKey);
-    console.log({ cacheKey });
     if (cachedMessages) {
-      console.log({ cachedMessages });
       return {
         statusCode: 200,
         success: true,

@@ -5,6 +5,7 @@ import {
   markMessagesAsReadController,
   getUnreadCountController,
 } from "../../controller/v1/messages.js";
+import { upload } from "../../middleware/upload.js";
 
 const MessageRouter = express.Router();
 
@@ -12,6 +13,8 @@ MessageRouter.post(
   "/",
   // authMiddleware,
   // validatePayload({ rule: chatGroupPayloadValidator }),
+  upload.array("attachments", 10),
+
   createMessageController,
 );
 

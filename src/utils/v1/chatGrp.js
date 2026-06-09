@@ -804,12 +804,10 @@ export const getChatGroupsUtils = async ({
      */
 
     const cacheKey = redisKeys.chatGroups(orgId, userId, groupType || "all");
-    console.log({ cacheKey });
 
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
-      console.log({ cachedData });
       return cachedData;
     }
 
@@ -1061,6 +1059,15 @@ export const getChatGroupByIdUtils = async ({
       groupId,
       deletedAt: null,
     });
+    const memberMap = {};
+
+    data.users.forEach((user) => {
+      memberMap[String(user.userId)] = user.name;
+    });
+    const enrichedMessages = messages.map((msg) => ({
+      ...msg,
+      senderName: memberMap[String(msg.senderId)] || "Unknown User",
+    }));
 
     /**
      * FINAL RESPONSE
@@ -1081,7 +1088,7 @@ export const getChatGroupByIdUtils = async ({
           createdAt: group.createdAt,
         },
         members: finalMembers.map((user) => user.user),
-        messages: messages.reverse(),
+        messages: enrichedMessages,
       },
       meta: {
         page: safePage,

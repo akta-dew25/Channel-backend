@@ -7,8 +7,16 @@ import {
 
 export const createMessageController = async (req, res) => {
   try {
+    const attachments =
+      req.files?.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/messages/${file.filename}`,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+      })) || [];
     const { statusCode, ...response } = await createMessagesUtils({
       ...req.body,
+      attachments,
       orgId: req.user.orgId,
       senderId: req.user.userId,
       accessToken: req.headers.authorization,
